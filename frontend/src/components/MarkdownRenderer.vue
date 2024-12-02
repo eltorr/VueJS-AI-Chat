@@ -5,7 +5,15 @@
 <script>
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import 'highlight.js/styles/github-dark.css';
+// Import a theme - you can choose from many available themes
+import 'highlight.js/styles/tokyo-night-dark.css';  // Dark theme that works well with our color scheme
+// Optional: Import additional languages if needed
+import 'highlight.js/lib/languages/python';
+import 'highlight.js/lib/languages/javascript';
+import 'highlight.js/lib/languages/bash';
+import 'highlight.js/lib/languages/json';
+import 'highlight.js/lib/languages/xml';
+import 'highlight.js/lib/languages/css';
 
 export default {
   name: 'MarkdownRenderer',
@@ -20,29 +28,43 @@ export default {
     }
   },
   mounted() {
-    // Add copy buttons to code blocks after the content is rendered
+    // Highlight all code blocks after the content is rendered
     this.$nextTick(() => {
       const codeBlocks = this.$el.querySelectorAll('pre code');
       codeBlocks.forEach(block => {
-        const pre = block.parentNode;
-        const wrapper = document.createElement('div');
-        wrapper.className = 'code-block-wrapper';
+        hljs.highlightElement(block);
         
-        const copyButton = document.createElement('button');
-        copyButton.className = 'copy-button';
-        copyButton.innerHTML = '📋 Copy';
-        copyButton.onclick = () => {
-          navigator.clipboard.writeText(block.textContent);
-          copyButton.innerHTML = '✅ Copied!';
-          setTimeout(() => {
-            copyButton.innerHTML = '📋 Copy';
-          }, 2000);
-        };
+        // Add language label if available
+        const language = block.className.replace('language-', '');
+        if (language && language !== 'undefined') {
+          const pre = block.parentNode;
+          const wrapper = document.createElement('div');
+          wrapper.className = 'code-block-wrapper';
+          
+          const languageLabel = document.createElement('div');
+          languageLabel.className = 'code-language-label';
+          languageLabel.textContent = language;
+          
+          const copyButton = document.createElement('button');
+          copyButton.className = 'copy-button';
+          copyButton.innerHTML = ' Copy';
+          copyButton.onclick = () => {
+            navigator.clipboard.writeText(block.textContent);
+            copyButton.innerHTML = '✅ Copied!';
+            setTimeout(() => {
+              copyButton.innerHTML = '📋 Copy';
+            }, 2000);
+          };
 
-        // Move the pre element into the wrapper
-        pre.parentNode.insertBefore(wrapper, pre);
-        wrapper.appendChild(pre);
-        wrapper.appendChild(copyButton);
+          const controls = document.createElement('div');
+          controls.className = 'code-controls';
+          controls.appendChild(languageLabel);
+          controls.appendChild(copyButton);
+
+          pre.parentNode.insertBefore(wrapper, pre);
+          wrapper.appendChild(controls);
+          wrapper.appendChild(pre);
+        }
       });
     });
   },
@@ -67,9 +89,33 @@ export default {
 <style>
 .markdown-content {
   text-align: left;
-  color: var(--text-primary);
-  font-family: var(--font-primary);
   line-height: 1.7;
+}
+
+.markdown-content p {
+  margin: 0.5em 0;
+  font-family: inherit !important;
+}
+
+.markdown-content blockquote {
+  font-family: 'Caveat', cursive !important;
+  font-size: 1.4em;
+  line-height: 1.6;
+  border-left: 4px solid var(--accent-color);
+  margin: 1.5em 0;
+  padding: 1em 1.5em;
+  background-color: var(--bg-secondary);
+  border-radius: 0 8px 8px 0;
+  font-weight: 500;
+}
+
+.markdown-content code {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.9em;
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  background-color: var(--code-bg);
+  color: var(--accent-color);
 }
 
 .markdown-content h1,
@@ -81,11 +127,6 @@ export default {
   color: var(--text-primary);
   margin-top: 1.5em;
   margin-bottom: 0.5em;
-}
-
-.markdown-content p {
-  color: var(--text-primary);
-  line-height: 1.6;
 }
 
 .markdown-content a {
@@ -100,73 +141,99 @@ export default {
 .code-block-wrapper {
   position: relative;
   margin: 1.5em 0;
-}
-
-.markdown-content pre {
-  background-color: var(--bg-secondary) !important;
+  background: var(--code-bg);
   border-radius: 8px;
-  padding: 1em;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid var(--border-color);
+  overflow: hidden;
 }
 
-.markdown-content code {
+.code-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.code-language-label {
   font-family: var(--font-mono);
-  font-size: 90%;
-  padding: 0.2em 0.4em;
-  margin: 0;
-  background-color: var(--bg-secondary);
-  border-radius: 4px;
-  color: var(--text-primary);
-  transition: background-color var(--transition-fast);
-}
-
-.markdown-content pre code {
-  background-color: transparent;
-  padding: 0;
-  display: block;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .copy-button {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 6px 12px;
-  background: var(--bg-primary);
+  font-family: var(--font-primary);
+  font-size: 0.9rem;
+  padding: 4px 12px;
+  background: transparent;
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 0.85rem;
+  color: var(--text-secondary);
   cursor: pointer;
-  opacity: 0;
-  font-family: var(--font-primary);
-  transition: all var(--transition-bounce);
-}
-
-.code-block-wrapper:hover .copy-button {
-  opacity: 1;
+  transition: all 0.2s ease;
 }
 
 .copy-button:hover {
   background: var(--accent-color);
   color: white;
   border-color: var(--accent-color);
-  transform: scale(1.05);
+}
+
+.markdown-content pre {
+  margin: 0;
+  padding: 16px;
+  background: var(--code-bg) !important;
+  overflow-x: auto;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Customize scrollbar for code blocks */
+.markdown-content pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.markdown-content pre::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.markdown-content pre::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.markdown-content pre::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-color);
+}
+
+/* Dark mode specific styles */
+.dark-mode .code-controls {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dark-mode .copy-button {
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.dark-mode .copy-button:hover {
+  background: var(--accent-color);
+  color: white;
 }
 
 /* Style for inline code */
 .markdown-content p code {
   color: var(--accent-color);
   background-color: var(--bg-secondary);
-}
-
-/* Style for blockquotes */
-.markdown-content blockquote {
-  border-left: 4px solid var(--accent-color);
-  margin: 1em 0;
-  padding-left: 1em;
-  color: var(--text-secondary);
 }
 
 /* Style for lists */
