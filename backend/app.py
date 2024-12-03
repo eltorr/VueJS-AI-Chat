@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""
+FastAPI backend server for AI chat application.
+
+This module provides REST API endpoints for interacting with OpenAI and Ollama models.
+It handles chat conversations, image generation, and model management.
+"""
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -8,11 +16,13 @@ from dotenv import load_dotenv
 import ollama
 import requests
 
-load_dotenv()
+# Load OpenAI API key from environment file
+load_dotenv('openai.env')
 
+# Initialize FastAPI application
 app = FastAPI()
 
-# Configure CORS
+# Configure CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,34 +31,113 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure OpenAI with new client
+# Initialize OpenAI client with API key
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
+def sanitize_message(content: str) -> str:
+    """Sanitize and optimize message content for AI processing.
+    
+    Performs the following operations:
+    1. Normalizes whitespace and removes redundant spaces
+    2. Removes problematic characters and normalizes punctuation
+    3. Trims excessive newlines and spaces
+    4. Normalizes quotes and apostrophes
+    5. Ensures proper sentence spacing
+    
+    Args:
+        content (str): Raw message content to sanitize
+        
+    Returns:
+        str: Sanitized and normalized message content
+    """
+    if not content:
+        return ""
+    
+    # Normalize whitespace and remove redundant spaces
+    content = ' '.join(content.split())
+    
+    # Replace problematic characters
+    replacements = {
+        '…': '...',  # Normalize ellipsis
+        '"': '"',    # Normalize quotes
+        '"': '"',
+        ''': "'",    # Normalize apostrophes
+        ''': "'",
+        '—': '-',    # Normalize dashes
+        '–': '-',
+        '´': "'",    # Additional quote normalization
+        '`': "'",
+        '\u200b': '', # Remove zero-width spaces
+        '\ufeff': '', # Remove byte order marks
+    }
+    
+    for old, new in replacements.items():
+        content = content.replace(old, new)
+    
+    # Ensure proper sentence spacing
+    content = content.replace('.', '. ').replace('!', '! ').replace('?', '? ')
+    
+    # Remove multiple periods (except for ellipsis)
+    while '....' in content:
+        content = content.replace('....', '...')
+    
+    # Clean up spaces around punctuation
+    content = content.replace(' ,', ',').replace(' .', '.').replace(' !', '!').replace(' ?', '?')
+    
+    # Ensure proper spacing after punctuation
+    for punct in ['.', ',', '!', '?', ':', ';']:
+        content = content.replace(f'{punct}', f'{punct} ')
+    
+    # Remove multiple spaces (again, in case previous operations created any)
+    content = ' '.join(content.split())
+    
+    # Strip leading/trailing whitespace
+    content = content.strip()
+    
+    return content
+
 class Message(BaseModel):
+    """Pydantic model for chat messages."""
     role: str
     content: str
     model: Optional[str] = None
     images: Optional[List[str]] = None
 
 class OllamaMessage(BaseModel):
+    """Pydantic model for Ollama-specific chat requests."""
     messages: List[Message]
     model: str
 
 class ChatRequest(BaseModel):
+    """Pydantic model for general chat requests."""
     messages: List[Message]
     model: str
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
+    """Handle chat requests for both text and image generation.
+    
+    Supports OpenAI's GPT models and DALL-E for image generation.
+    
+    Args:
+        request (ChatRequest): The chat request containing messages and model selection
+        
+    Returns:
+        dict: Response containing generated message or image URL
+        
+    Raises:
+        HTTPException: If model is unsupported or API call fails
+    """
     print("OpenAI Endpoint hit!")
     try:
         print("Received request data:", request.dict())
         
         if request.model == "dall-e-3":
-            # Handle DALL-E image generation
+            # Sanitize the prompt for DALL-E
+            sanitized_prompt = sanitize_message(request.messages[-1].content)
             response = client.images.generate(
                 model="dall-e-3",
-                prompt=request.messages[-1].content,  # Use the last message as the prompt
+                prompt=sanitized_prompt,
                 size="1024x1024",
                 quality="standard",
                 n=1,
@@ -66,10 +155,11 @@ async def chat(request: ChatRequest):
                 detail="For chat, currently only supporting gpt-4o-mini model"
             )
         
+        # Sanitize all messages
         formatted_messages = [
             {
                 "role": msg.role,
-                "content": msg.content
+                "content": sanitize_message(msg.content)
             } for msg in request.messages
         ]
         
@@ -88,6 +178,14 @@ async def chat(request: ChatRequest):
 
 @app.get("/api/ollama/models")
 async def get_ollama_models():
+    """Fetch available models from local Ollama instance.
+    
+    Returns:
+        dict: List of available Ollama models
+        
+    Raises:
+        HTTPException: If unable to communicate with Ollama service
+    """
     try:
         response = requests.get('http://localhost:11434/api/tags')
         if response.status_code == 200:
@@ -113,6 +211,19 @@ async def get_ollama_models():
 
 @app.post("/api/ollama/chat")
 async def ollama_chat(message: OllamaMessage):
+    """Handle chat requests for Ollama models.
+    
+    Supports both text and vision models.
+    
+    Args:
+        message (OllamaMessage): Chat request containing messages and model selection
+        
+    Returns:
+        dict: Response containing generated message
+        
+    Raises:
+        HTTPException: If Ollama API call fails
+    """
     print("Ollama Endpoint hit!")
     try:
         print("Received data:", message.dict())
@@ -149,6 +260,11 @@ async def ollama_chat(message: OllamaMessage):
 
 @app.get("/api/openai/models")
 async def get_openai_models():
+    """Get list of supported OpenAI models.
+    
+    Returns:
+        dict: List of supported models with their types
+    """
     # Return both chat and image models
     models = [
         {"name": "gpt-4o-mini", "type": "chat"},

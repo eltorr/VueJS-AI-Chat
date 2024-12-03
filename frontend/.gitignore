@@ -6,6 +6,9 @@ node_modules
 # local env files
 .env.local
 .env.*.local
+openai.env
+openai.env.local
+openai.*.local
 
 # Log files
 npm-debug.log*

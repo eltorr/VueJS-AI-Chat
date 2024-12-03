@@ -86,68 +86,54 @@ export default {
 
 <style scoped>
 .model-selector {
-  margin: 12px 0;
   width: 100%;
+  margin: 0;
 }
 
 select {
   width: 100%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  border: 2px solid var(--border-color);
-  background: var(--bg-primary);
+  height: 24px;
+  padding: 2px 20px 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
   color: var(--text-primary);
-  font-family: 'Quicksand', sans-serif;
-  font-size: 1.1rem;
-  font-weight: 500;
+  font-size: 0.75rem;
+  font-weight: normal;
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
   background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
   background-repeat: no-repeat;
-  background-position: right 1rem center;
-  background-size: 1em;
+  background-position: right 4px center;
+  background-size: 12px;
 }
 
 select:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(var(--accent-color-rgb), 0.1);
-}
-
-select:hover {
-  border-color: var(--accent-color);
 }
 
 select option {
-  padding: 12px;
-  font-size: 1.1rem;
+  padding: 2px 6px;
+  font-size: 0.75rem;
   background: var(--bg-primary);
   color: var(--text-primary);
 }
 
-/* Fluid typography using clamp */
+/* Remove fluid typography */
 @media screen and (min-width: 320px) {
   select {
-    font-size: clamp(1rem, 2vw, 1.2rem);
-    padding: clamp(10px, 2vw, 16px);
+    font-size: 0.75rem;
+    padding: 2px 20px 2px 6px;
   }
 }
 
-/* Dark mode specific styles */
-:global(.dark-mode) select {
-  background-color: var(--bg-secondary);
-}
-
-/* Mobile adjustments */
+/* Remove mobile adjustments or keep them minimal */
 @media (max-width: 768px) {
-  .model-selector {
-    margin: 8px 0;
-  }
-  
   select {
-    padding: 10px 14px;
+    padding: 2px 20px 2px 6px;
   }
 }
 </style> 

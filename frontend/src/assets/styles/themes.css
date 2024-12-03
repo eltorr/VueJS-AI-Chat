@@ -1,0 +1,12 @@
+.dark-mode {
+  --bg-primary: #1a1b26;      /* Slightly cooler and brighter dark background */
+  --bg-secondary: #24283b;    /* Cooler secondary background */
+  --text-primary: #c0caf5;    /* Cooler white text with slight blue tint */
+  --text-secondary: #7982a9;  /* Cooler secondary text */
+  --border-color: #292e42;    /* Cooler border color */
+  --accent-color: #7aa2f7;    /* Cooler accent blue */
+  
+  /* Message specific colors */
+  --message-assistant: #292e42;  /* Cooler message background */
+  --message-user: #3d59a1;      /* Cooler user message gradient start */
+} 
