@@ -61,7 +61,7 @@ export default {
 }
 
 .dark-mode {
-  --bg-primary: #16171f;      /* Darker base background */
+  --bg-primary: #12131d;      /* Darker base background */
   --bg-secondary: #1f2335;    /* Darker secondary background */
   --text-primary: #a9b1d6;    /* Slightly darker text */
   --text-secondary: #565f89;  /* Darker secondary text */

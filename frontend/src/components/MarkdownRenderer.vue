@@ -47,13 +47,51 @@ export default {
           
           const copyButton = document.createElement('button');
           copyButton.className = 'copy-button';
-          copyButton.innerHTML = ' Copy';
-          copyButton.onclick = () => {
-            navigator.clipboard.writeText(block.textContent);
-            copyButton.innerHTML = '✅ Copied!';
-            setTimeout(() => {
-              copyButton.innerHTML = '📋 Copy';
-            }, 2000);
+          copyButton.innerHTML = '📋 Copy';
+          copyButton.onclick = async () => {
+            try {
+              // For code blocks, only copy the actual code content without markdown formatting
+              const codeContent = block.textContent;
+              
+              if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(codeContent);
+              } else {
+                // Fallback for when Clipboard API is not available
+                const textArea = document.createElement('textarea');
+                textArea.value = codeContent;
+                
+                // Make the textarea out of viewport
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                
+                // Select and copy the text
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                  document.execCommand('copy');
+                  textArea.remove();
+                } catch (err) {
+                  console.error('Failed to copy text:', err);
+                  textArea.remove();
+                  return;
+                }
+              }
+              
+              // Show success message
+              copyButton.innerHTML = '✅ Copied!';
+              setTimeout(() => {
+                copyButton.innerHTML = '📋 Copy';
+              }, 2000);
+            } catch (err) {
+              console.error('Failed to copy text:', err);
+              copyButton.innerHTML = '❌ Failed';
+              setTimeout(() => {
+                copyButton.innerHTML = '📋 Copy';
+              }, 2000);
+            }
           };
 
           const controls = document.createElement('div');

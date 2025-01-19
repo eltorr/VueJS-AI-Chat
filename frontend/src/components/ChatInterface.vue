@@ -59,7 +59,7 @@
             </div>
             <div class="message-bubble">
               <div class="message-actions">
-                <button class="action-btn" @click="copyContent(message)" :title="hasImage(message.content) ? 'Copy image' : 'Copy'">
+                <button class="action-btn" @click="(event) => copyContent(message, event.target)" :title="hasImage(message.content) ? 'Copy image' : 'Copy'">
                   <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16">
                     <path fill="none" stroke="var(--text-primary)" stroke-width="2" d="M8 4v12a2 2 0 002 2h8a2 2 0 002-2V7.242a2 2 0 00-.602-1.43L16.083 2.57A2 2 0 0014.685 2H10a2 2 0 00-2 2z"/>
                     <path fill="none" stroke="var(--text-primary)" stroke-width="2" d="M16 18v2a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h2"/>
@@ -116,21 +116,89 @@
         </div>
         <button @click="sendMessage" :disabled="isLoading">
           <span class="button-content">
-            <span v-if="isLoading" class="electric-loader">
-              <svg viewBox="0 0 24 24" width="24" height="24">
-                <path class="bolt" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-              </svg>
-            </span>
+            <template v-if="isLoading">
+              <div class="electric-loader">
+                <svg viewBox="0 0 24 24">
+                  <path class="bolt" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+              </div>
+            </template>
             <span v-else class="send-icon">↗</span>
           </span>
         </button>
       </div>
     </div>
+
+    <!-- Canvas overlay -->
+    <div class="canvas-overlay" :class="{ 'active': isCanvasVisible }">
+      <div class="canvas-content">
+        <div class="canvas-header">
+          <h3>AI Writing Canvas</h3>
+          <div class="canvas-actions">
+            <button class="canvas-btn" @click="analyzeContent" title="Analyze & Improve">
+              🔍
+            </button>
+            <button class="canvas-btn" @click="copyCanvasContent" title="Copy Content">
+              📋
+            </button>
+            <button class="canvas-btn" @click="formatCode" title="Format Code" v-if="containsCode">
+              ⚡
+            </button>
+            <button class="canvas-btn" @click="clearCanvas" title="Clear Canvas">
+              🗑️
+            </button>
+            <button class="canvas-close-btn" @click="toggleCanvas">×</button>
+          </div>
+        </div>
+
+        <div class="canvas-mode-selector">
+          <button 
+            v-for="mode in modes" 
+            :key="mode.id"
+            :class="['mode-btn', { active: currentMode === mode.id }]"
+            @click="setMode(mode.id)"
+          >
+            {{ mode.icon }} {{ mode.name }}
+          </button>
+        </div>
+
+        <textarea 
+          v-model="canvasContent"
+          :placeholder="getPlaceholder"
+          class="writing-canvas"
+          @input="handleCanvasInput"
+          ref="canvasTextarea"
+        ></textarea>
+
+        <div class="canvas-suggestions" v-if="canvasSuggestions.length">
+          <div class="suggestions-header">
+            <span>{{ getSuggestionsTitle }}</span>
+            <button class="clear-suggestions-btn" @click="clearCanvasSuggestions">Clear</button>
+          </div>
+          <div class="suggestions-container">
+            <div 
+              v-for="(suggestion, index) in canvasSuggestions" 
+              :key="index"
+              class="suggestion-item"
+              @click="applySuggestionToCanvas(suggestion)"
+            >
+              <span class="suggestion-icon">{{ getSuggestionIcon }}</span>
+              <span class="suggestion-text">{{ suggestion }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas toggle button -->
+    <button class="canvas-toggle-btn" @click="toggleCanvas" title="Toggle Writing Canvas">
+      📝
+    </button>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, watch, nextTick, onUnmounted, computed } from 'vue'
 import axios from 'axios'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ModelSelector from './ModelSelector.vue'
@@ -154,6 +222,20 @@ const modelSupportsVision = ref(false)
 const currentSuggestion = ref(null)
 const typingTimeout = ref(null)
 const isSidebarCollapsed = ref(false)
+const isCanvasVisible = ref(false)
+const canvasContent = ref('')
+const canvasTextarea = ref(null)
+const currentMode = ref('text')
+const canvasSuggestions = ref([])
+const containsCode = ref(false)
+const canvasTypingTimeout = ref(null)
+
+// Add these refs at the top with other refs
+const lastRequestTime = ref(0)
+const lastCursorPosition = ref(0)
+const lastContentLength = ref(0)
+const requestThrottleMs = 1000 // Minimum time between requests
+const minCharacterChange = 5    // Minimum character change to trigger request
 
 const providers = [
   { 
@@ -486,13 +568,59 @@ const hasImage = (content) => {
   return content.includes('![Generated Image]') || content.includes('<img')
 }
 
-const copyContent = async (message) => {
+// Update the copyContent function
+const copyContent = async (message, button) => {
   try {
-    // Remove markdown image syntax if present
-    const cleanContent = message.content.replace(/!\[.*?\]\((.*?)\)/g, '$1')
-    await navigator.clipboard.writeText(cleanContent)
+    let textToCopy = '';
+    
+    if (hasImage(message.content)) {
+      // Extract image URL from markdown or HTML
+      textToCopy = message.content.match(/(?:!\[.*?\]\((.*?)\)|<img.*?src="(.*?)")/)?.[1] || message.content;
+    } else if (message.content.includes('```')) {
+      // Handle code blocks
+      const codeMatch = message.content.match(/```(?:\w+)?\n([\s\S]*?)```/);
+      textToCopy = codeMatch ? codeMatch[1].trim() : message.content;
+    } else {
+      // For regular messages, strip any markdown formatting
+      textToCopy = message.content
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Remove markdown links
+        .replace(/[*_~`]/g, '')                   // Remove markdown formatting
+        .replace(/\n{3,}/g, '\n\n');             // Normalize multiple newlines
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(textToCopy);
+    } else {
+      // Fallback for when Clipboard API is not available
+      const textArea = document.createElement('textarea');
+      textArea.value = textToCopy;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        textArea.remove();
+      }
+    }
+
+    // Show success state
+    if (button) {
+      const originalHTML = button.innerHTML;
+      button.innerHTML = `<svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16">
+        <path fill="none" stroke="var(--accent-color)" stroke-width="2" d="M20 6L9 17l-5-5"/>
+      </svg>`;
+      
+      setTimeout(() => {
+        button.innerHTML = originalHTML;
+      }, 2000);
+    }
+
   } catch (err) {
-    console.error('Failed to copy:', err)
+    console.error('Failed to copy:', err);
   }
 }
 
@@ -571,6 +699,405 @@ onUnmounted(() => {
     element.removeEventListener('scroll', handleScrollAnimation);
   });
 });
+
+const toggleCanvas = () => {
+  isCanvasVisible.value = !isCanvasVisible.value
+}
+
+const handleCanvasInput = async () => {
+  if (canvasTypingTimeout.value) clearTimeout(canvasTypingTimeout.value)
+  
+  const textarea = canvasTextarea.value
+  if (!textarea) return
+  
+  const cursorPos = textarea.selectionStart
+  const content = canvasContent.value
+  
+  // Check if we should skip the request based on various conditions
+  const now = Date.now()
+  const timeSinceLastRequest = now - lastRequestTime.value
+  const cursorMovement = Math.abs(cursorPos - lastCursorPosition.value)
+  const contentLengthDiff = Math.abs(content.length - lastContentLength.value)
+  
+  // Skip if:
+  // 1. Not enough time has passed since last request
+  // 2. Cursor hasn't moved significantly
+  // 3. Content length hasn't changed enough
+  // 4. User is rapidly typing (wait for pause)
+  if (timeSinceLastRequest < requestThrottleMs || 
+      (cursorMovement < 3 && contentLengthDiff < minCharacterChange)) {
+    return
+  }
+  
+  // Get context window (1000 chars before and after cursor)
+  const contextWindowSize = 1000
+  const contextStart = Math.max(0, cursorPos - contextWindowSize)
+  const contextEnd = Math.min(content.length, cursorPos + contextWindowSize)
+  
+  const beforeCursor = content.substring(contextStart, cursorPos)
+  const afterCursor = content.substring(cursorPos, contextEnd)
+  
+  // Skip if not enough context
+  if (beforeCursor.trim().length < 3) {
+    canvasSuggestions.value = []
+    return
+  }
+  
+  // Detect if user is in the middle of a word
+  const lastWord = beforeCursor.match(/\w+$/)?.[0] || ''
+  const nextWord = afterCursor.match(/^\w+/)?.[0] || ''
+  
+  // Skip if in the middle of a word unless it's long enough
+  if (lastWord && nextWord && lastWord.length < 3) {
+    return
+  }
+  
+  canvasTypingTimeout.value = setTimeout(async () => {
+    try {
+      // Update tracking variables
+      lastRequestTime.value = Date.now()
+      lastCursorPosition.value = cursorPos
+      lastContentLength.value = content.length
+      
+      const endpoint = provider.value === 'ollama' ? '/api/ollama/chat' : '/api/chat'
+      const isCode = containsCode.value
+
+      // Determine the type of suggestions needed based on context
+      const contextType = determineContextType(beforeCursor, afterCursor)
+      
+      const response = await axios.post(`http://localhost:5001${endpoint}`, {
+        messages: [
+          {
+            role: 'system',
+            content: generateSystemPrompt(isCode, contextType)
+          },
+          {
+            role: 'user',
+            content: `Context before cursor (${beforeCursor.length} chars):
+${beforeCursor}
+
+Cursor position "|"
+
+Context after cursor (${afterCursor.length} chars):
+${afterCursor}
+
+Provide 3 specific, contextual completions that would make sense at the cursor position.`
+          }
+        ],
+        model: selectedModel.value.name
+      })
+
+      if (response.data && response.data.message) {
+        const suggestions = response.data.message
+          .split('\n')
+          .map(s => s.trim())
+          .filter(s => s && !s.startsWith('-') && !s.startsWith('*'))
+          .map(s => s.replace(/^\d+\.\s*/, ''))
+          .filter(s => {
+            const length = s.length
+            return length > 0 && length < 100 && 
+                   !s.toLowerCase().includes('suggestion') &&
+                   !s.toLowerCase().includes('recommend') &&
+                   !s.toLowerCase().includes('you can') &&
+                   !s.toLowerCase().includes('could ')
+          })
+          .map(s => s.replace(/^["'`]|["'`]$/g, '')) // Remove quotes around suggestions
+          .slice(0, 3)
+
+        canvasSuggestions.value = suggestions
+      }
+    } catch (error) {
+      console.error('Canvas suggestion error:', error)
+      canvasSuggestions.value = []
+    }
+  }, 500) // Increased delay to wait for user to pause typing
+}
+
+// Helper function to determine context type
+const determineContextType = (before, after) => {
+  const lastLine = before.split('\n').pop() || ''
+  const nextLine = after.split('\n')[0] || ''
+  
+  if (/[{([]$/.test(lastLine)) return 'block-start'
+  if (/^[})\]]/.test(nextLine)) return 'block-end'
+  if (/\w+\($/.test(lastLine)) return 'function-params'
+  if (/=$/.test(lastLine)) return 'assignment'
+  if (/^\s*$/.test(lastLine)) return 'new-line'
+  if (/\.\w*$/.test(lastLine)) return 'method-chain'
+  return 'general'
+}
+
+// Helper function to generate appropriate system prompt
+const generateSystemPrompt = (isCode, contextType) => {
+  if (!isCode) {
+    return `You are an intelligent writing assistant. Provide natural, contextual continuations that match the existing style and tone. Focus on completing the current thought or sentence.`
+  }
+  
+  const contextPrompts = {
+    'block-start': 'Complete the code block with appropriate content and structure.',
+    'block-end': 'Suggest closing statements or follow-up code.',
+    'function-params': 'Complete the function parameters with appropriate types and names.',
+    'assignment': 'Suggest appropriate values or expressions for the assignment.',
+    'new-line': 'Suggest the next logical code statement or block.',
+    'method-chain': 'Complete the method chain with relevant method calls.',
+    'general': 'Provide logical code continuations that maintain consistency.'
+  }
+  
+  return `You are an intelligent code completion assistant. ${contextPrompts[contextType]}
+  - Complete code patterns based on context
+  - Maintain consistent style and naming
+  - Consider scope and available variables
+  - Provide syntactically correct suggestions`
+}
+
+const applySuggestionToCanvas = (suggestion) => {
+  const textarea = canvasTextarea.value
+  if (!textarea) return
+  
+  // Get cursor position
+  const cursorPos = textarea.selectionStart
+  const content = canvasContent.value
+  
+  // Insert suggestion at cursor position
+  const before = content.substring(0, cursorPos)
+  const after = content.substring(cursorPos)
+  
+  // Add appropriate spacing based on context
+  const needsSpaceBefore = before.length > 0 && 
+                          !before.endsWith(' ') && 
+                          !before.endsWith('\n') &&
+                          !suggestion.startsWith(' ')
+  const needsSpaceAfter = after.length > 0 && 
+                         !after.startsWith(' ') && 
+                         !after.startsWith('\n') &&
+                         !suggestion.endsWith(' ')
+  
+  const spaceBefore = needsSpaceBefore ? ' ' : ''
+  const spaceAfter = needsSpaceAfter ? ' ' : ''
+  
+  canvasContent.value = before + spaceBefore + suggestion + spaceAfter + after
+  
+  // Reset cursor position after suggestion
+  nextTick(() => {
+    const newPos = cursorPos + spaceBefore.length + suggestion.length + spaceAfter.length
+    textarea.focus()
+    textarea.setSelectionRange(newPos, newPos)
+  })
+  
+  // Clear suggestions after applying
+  clearCanvasSuggestions()
+}
+
+const setMode = (mode) => {
+  currentMode.value = mode
+  clearCanvasSuggestions()
+  if (canvasTextarea.value) {
+    canvasTextarea.value.focus()
+  }
+}
+
+const formatCode = async () => {
+  const content = canvasContent.value.trim()
+  if (!content) return
+
+  try {
+    const endpoint = provider.value === 'ollama' ? '/api/ollama/chat' : '/api/chat'
+
+    const response = await axios.post(`http://localhost:5001${endpoint}`, {
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a code formatter and optimizer. Format the following code for readability and efficiency. Return ONLY the formatted code without any markdown syntax, explanations, or backticks.'
+        },
+        {
+          role: 'user',
+          content: content
+        }
+      ],
+      model: selectedModel.value.name
+    })
+
+    if (response.data && response.data.message) {
+      // Clean up the response to remove any markdown or explanation
+      let formattedCode = response.data.message
+        .replace(/```[\w]*\n?/g, '') // Remove code block markers
+        .replace(/`/g, '')           // Remove inline code markers
+        .trim()
+      
+      canvasContent.value = formattedCode
+    }
+  } catch (error) {
+    console.error('Formatting error:', error)
+  }
+}
+
+const analyzeContent = async () => {
+  const content = canvasContent.value.trim()
+  if (!content) return
+
+  try {
+    const isOllama = provider.value === 'ollama'
+    const endpoint = isOllama ? '/api/ollama/chat' : '/api/chat'
+    const modelName = isOllama ? 
+      (selectedModel.value.name || 'llama2') : 
+      (selectedModel.value.name || 'gpt-4-turbo-preview')
+
+    const isCode = containsCode.value
+    let analysisPrompt = isCode ? 
+      `Analyze and improve this code. Provide:
+1. A complete rewritten version with improvements
+2. Brief bullet points explaining the key improvements made
+Keep the rewritten version in the same style but optimize for:
+- Better readability
+- Modern best practices
+- Error handling
+- Performance
+- Clean code principles
+
+Original code:
+${content}
+
+Respond in this format:
+REWRITTEN:
+[Your improved version here]
+
+IMPROVEMENTS:
+• [Brief point about improvement 1]
+• [Brief point about improvement 2]
+etc.` 
+      : 
+      `Analyze and improve this text. Provide:
+1. A complete rewritten version with improvements
+2. Brief bullet points explaining the key improvements made
+Optimize for:
+- Clarity and conciseness
+- Professional tone
+- Proper structure
+- Effective communication
+
+Original text:
+${content}
+
+Respond in this format:
+REWRITTEN:
+[Your improved version here]
+
+IMPROVEMENTS:
+• [Brief point about improvement 1]
+• [Brief point about improvement 2]
+etc.`
+
+    const response = await axios.post(`http://localhost:5001${endpoint}`, {
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert editor and optimizer. Provide concrete improvements and clear explanations.'
+        },
+        {
+          role: 'user',
+          content: analysisPrompt
+        }
+      ],
+      model: modelName
+    })
+
+    if (response.data && response.data.message) {
+      // Parse the response
+      const parts = response.data.message.split('IMPROVEMENTS:')
+      if (parts.length === 2) {
+        const rewrittenContent = parts[0]
+          .replace('REWRITTEN:', '')
+          .trim()
+        
+        const improvements = parts[1]
+          .split('\n')
+          .map(s => s.trim())
+          .filter(s => s.startsWith('•'))
+          .map(s => s.substring(1).trim())
+          .filter(s => s.length > 0)
+
+        // Update suggestions with improvements
+        canvasSuggestions.value = improvements
+
+        // Show rewritten version as first suggestion
+        if (rewrittenContent) {
+          canvasSuggestions.value.unshift(' Click to apply rewritten version')
+          // Store rewritten content to apply when first suggestion is clicked
+          canvasContent.value = rewrittenContent
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Analysis error:', error)
+  }
+}
+
+const clearCanvasSuggestions = () => {
+  canvasSuggestions.value = []
+}
+
+const getSuggestionIcon = computed(() => {
+  switch (currentMode.value) {
+    case 'code':
+      return '💻'
+    case 'improve':
+      return '✨'
+    default:
+      return '💡'
+  }
+})
+
+watch(canvasContent, (newContent) => {
+  // Simple code detection - checks for common programming patterns
+  containsCode.value = /[{}<>]|function|class|const|let|var|import|export/.test(newContent)
+})
+
+// Add these functions
+const clearCanvas = () => {
+  canvasContent.value = ''
+  clearCanvasSuggestions()
+  if (canvasTextarea.value) {
+    canvasTextarea.value.focus()
+  }
+}
+
+// Update the copyCanvasContent function
+const copyCanvasContent = async () => {
+  try {
+    const textToCopy = canvasContent.value;
+    
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(textToCopy);
+    } else {
+      const textArea = document.createElement('textarea');
+      textArea.value = textToCopy;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        document.execCommand('copy');
+      } finally {
+        textArea.remove();
+      }
+    }
+    
+    // Show success feedback
+    const copyButton = document.querySelector('.canvas-btn[title="Copy Content"]');
+    if (copyButton) {
+      const originalText = copyButton.innerHTML;
+      copyButton.innerHTML = '✅';
+      setTimeout(() => {
+        copyButton.innerHTML = originalText;
+      }, 2000);
+    }
+  } catch (error) {
+    console.error('Failed to copy canvas content:', error);
+  }
+};
 </script>
 
 <style scoped>
@@ -1095,7 +1622,7 @@ textarea {
   line-height: 1.6;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   min-height: 38px;
-  max-height: 150px;
+  max-height: 900px;
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
@@ -1884,27 +2411,352 @@ textarea {
 
 .electric-loader {
   animation: pulse 1.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px rgba(66, 135, 245, 0.8));
+}
+
+.electric-loader svg {
+  width: 24px;
+  height: 24px;
 }
 
 .bolt {
-  fill: none;
-  stroke: white;
-  stroke-width: 2;
+  fill: #ffffff;
+  stroke: #4287f5;
+  stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 90;
   stroke-dashoffset: 90;
-  animation: draw 1.5s ease-in-out infinite;
+  animation: draw 1.5s ease-in-out infinite, neonGlow 1.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 2px #4287f5);
 }
 
 @keyframes pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(0.9); opacity: 0.7; }
+  0%, 100% { 
+    transform: scale(1); 
+    filter: drop-shadow(0 0 8px rgba(66, 135, 245, 0.8));
+  }
+  50% { 
+    transform: scale(0.9); 
+    filter: drop-shadow(0 0 15px rgba(66, 135, 245, 1));
+  }
 }
 
 @keyframes draw {
   0% { stroke-dashoffset: 90; }
   50% { stroke-dashoffset: 0; }
   100% { stroke-dashoffset: -90; }
+}
+
+@keyframes neonGlow {
+  0%, 100% { 
+    filter: drop-shadow(0 0 3px #4287f5) 
+            drop-shadow(0 0 6px #4287f5) 
+            drop-shadow(0 0 12px #4287f5);
+    fill: rgba(255, 255, 255, 0.9);
+  }
+  50% { 
+    filter: drop-shadow(0 0 5px #4287f5) 
+            drop-shadow(0 0 10px #4287f5) 
+            drop-shadow(0 0 15px #4287f5);
+    fill: #ffffff;
+  }
+}
+</style>
+
+<style scoped>
+.canvas-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 100%;
+  max-width: 500px;
+  height: 100vh;
+  background: var(--bg-primary);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.1);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-overlay.active {
+  transform: translateX(0);
+}
+
+.canvas-content {
+  padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.canvas-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.canvas-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+
+.canvas-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.writing-canvas {
+  flex: 1;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1.6;
+  resize: none;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.writing-canvas:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.canvas-toggle-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  z-index: 999;
+}
+
+.canvas-toggle-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+@media (max-width: 768px) {
+  .canvas-overlay {
+    max-width: 100%;
+  }
+  
+  .canvas-toggle-btn {
+    bottom: 16px;
+    right: 16px;
+  }
+}
+</style>
+
+<style scoped>
+.canvas-suggestions {
+  border-top: 1px solid var(--border-color);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.suggestions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.suggestions-header span {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.clear-suggestions-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: all 0.2s ease;
+  height: auto;
+  min-width: auto;
+}
+
+.clear-suggestions-btn:hover {
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+}
+
+.suggestions-container {
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.suggestion-item {
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-item:hover {
+  background: var(--bg-primary);
+  transform: translateX(4px);
+}
+
+.suggestion-icon {
+  font-size: 1rem;
+  opacity: 0.7;
+}
+
+.suggestion-text {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+/* Update canvas-content to accommodate suggestions */
+.canvas-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.writing-canvas {
+  flex: 1;
+  min-height: 200px; /* Ensure minimum height */
+  max-height: calc(100vh - 400px); /* Leave room for suggestions */
+}
+
+/* Customize scrollbar for suggestions container */
+.suggestions-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.suggestions-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.suggestions-container::-webkit-scrollbar-thumb {
+  background: var(--accent-color);
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+/* Ensure suggestions are visible on mobile */
+@media (max-width: 768px) {
+  .writing-canvas {
+    max-height: calc(60vh - 200px);
+  }
+  
+  .suggestions-container {
+    max-height: 150px;
+  }
+}
+</style>
+
+<style scoped>
+.canvas-mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.mode-btn {
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.mode-btn.active {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.canvas-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.canvas-btn {
+  width: 32px;
+  height: 32px;
+  min-width: unset;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.canvas-btn:hover {
+  background: var(--accent-color);
+  color: white;
+  transform: translateY(-2px);
+  border-color: var(--accent-color);
+}
+
+.canvas-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  min-width: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.canvas-close-btn:hover {
+  color: var(--text-primary);
+  transform: none;
 }
 </style>
